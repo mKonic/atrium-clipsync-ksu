@@ -13,7 +13,9 @@ HOME_DIR=/data/user_de/0/com.android.shell/atrium-clipsync
             continue
         fi
         mkdir -p "$HOME_DIR"
-        cp "$MODDIR/clipsync.dex" "$HOME_DIR/clipsync.dex"
+        # A new file, not over the old one: a running copy has that mapped.
+        cp "$MODDIR/clipsync.dex" "$HOME_DIR/clipsync.dex.new"
+        mv "$HOME_DIR/clipsync.dex.new" "$HOME_DIR/clipsync.dex"
         chown -R 2000:2000 "$HOME_DIR"
         chmod 700 "$HOME_DIR"
         chmod 600 "$HOME_DIR/clipsync.dex"
@@ -24,6 +26,8 @@ HOME_DIR=/data/user_de/0/com.android.shell/atrium-clipsync
         chmod 600 "$HOME_DIR/log"
         su 2000 -c "CLASSPATH=$HOME_DIR/clipsync.dex exec app_process /system/bin dev.atrium.clipsync.Main $HOME_DIR" \
             >> "$HOME_DIR/log" 2>&1
+        # Another copy of this loop runs it already.
+        [ $? = 3 ] && break
         sleep 5
     done
 ) &

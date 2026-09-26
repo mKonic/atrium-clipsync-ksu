@@ -38,6 +38,8 @@ public final class Main {
     // Between clips put in one after another, so a keyboard's clipboard
     // history sees each.
     private static final long SET_GAP_MS = 250;
+    // The exit status telling service.sh another one has the lock.
+    private static final int ALREADY_RUNNING = 3;
 
     private final Context ctx;
     private final Handler main;
@@ -63,10 +65,20 @@ public final class Main {
     @SuppressWarnings("deprecation")
     public static void main(String[] args) throws Exception {
         Looper.prepareMainLooper();
+        // One at a time: a second would listen for the same service.
+        android.net.LocalServerSocket lock;
+        try {
+            lock = new android.net.LocalServerSocket("atrium-clipsync");
+        } catch (IOException e) {
+            Log.i("already running");
+            System.exit(ALREADY_RUNNING);
+            return;
+        }
         File state = new File(args.length > 0 ? args[0] : ".");
         Main m = new Main(Env.context(), state);
         m.start();
         Looper.loop();
+        lock.close();
     }
 
     private BluetoothAdapter adapter() {
