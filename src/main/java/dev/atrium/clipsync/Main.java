@@ -89,10 +89,14 @@ public final class Main {
     private void start() {
         Log.i("started as " + name);
         // The clip already there, if it is news to the history.
-        Found found = read();
-        Clip now = found != null ? load(found) : null;
-        if (now != null)
-            recent.current(now);
+        try {
+            Found found = read();
+            Clip now = found != null ? load(found) : null;
+            if (now != null)
+                recent.current(now);
+        } catch (RuntimeException e) {
+            Log.i("can't read the clipboard: " + e);
+        }
         clipboard.addPrimaryClipChangedListener(this::changed);
         Thread t = new Thread(this::serve, "rfcomm");
         t.setDaemon(true);
@@ -126,15 +130,16 @@ public final class Main {
         if (extras != null && extras.getBoolean(IS_SENSITIVE, false))
             return null;
         ClipData.Item item = d.getItemAt(0);
-        String mime = desc.getMimeTypeCount() > 0 ? desc.getMimeType(0) : "";
         Found f = new Found();
         f.time = desc.getTimestamp();
-        if (item.getUri() != null && mime.startsWith("image/")) {
-            f.mime = mime;
+        CharSequence text = item.getText();
+        // A URI: a picture if its provider says so (the clip's own mime can
+        // be just text/uri-list); its bytes are read later, off this thread.
+        if (text == null && item.getUri() != null) {
+            f.mime = desc.getMimeTypeCount() > 0 ? desc.getMimeType(0) : "";
             f.uri = item.getUri().toString();
             return f;
         }
-        CharSequence text = item.getText();
         if (text == null)
             text = item.coerceToText(ctx);
         if (text == null || text.length() == 0)
@@ -143,38 +148,80 @@ public final class Main {
         return f;
     }
 
-    // A found clip with its bytes: a picture's through `content read` (which
-    // asks the provider as this uid, the one the clipboard granted access
-    // to). Slow for pictures: off the main thread. Null when unreadable.
+    // A found clip with its bytes: a picture's through the `content` tool
+    // (it asks the provider as this uid, the one the clipboard granted
+    // access to). Slow for pictures: off the main thread. Null when it isn't
+    // a picture or can't be read.
     private static Clip load(Found f) {
         if (f.text != null)
             return f.text;
-        String mime = f.mime, uri = f.uri;
+        String mime = f.mime;
+        if (!mime.startsWith("image/") || mime.equals("image/*")) {
+            byte[] type = content("gettype", f.uri, 256);
+            // "Result: image/png"
+            String t = type == null ? "" : new String(type).trim().replaceFirst("^Result: ", "");
+            if (!t.startsWith("image/")) {
+                Log.i("copied a " + (t.isEmpty() ? "URI" : t) + " from " + authority(f.uri) + ": not a picture, skipped");
+                return null;
+            }
+            mime = t;
+        }
+        byte[] data = content("read", f.uri, Protocol.MAX_CLIP);
+        if (data == null || data.length == 0)
+            return null;
+        return new Clip(mime, data, f.time);
+    }
+
+    private static String authority(String uri) {
+        android.net.Uri u = android.net.Uri.parse(uri);
+        return u.getAuthority() != null ? u.getAuthority() : "?";
+    }
+
+    // `content <command> --uri <uri>`'s output, or null (logged) when it
+    // fails or passes `limit` bytes.
+    private static byte[] content(String command, String uri, int limit) {
         try {
-            Process p = new ProcessBuilder("/system/bin/content", "read", "--uri", uri).redirectErrorStream(false).start();
+            Process p = new ProcessBuilder("/system/bin/content", command, "--uri", uri).start();
             java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
             byte[] buf = new byte[65536];
             int n;
             try (InputStream in = p.getInputStream()) {
                 while ((n = in.read(buf)) > 0) {
                     out.write(buf, 0, n);
-                    if (out.size() > Protocol.MAX_CLIP) {
+                    if (out.size() > limit) {
                         p.destroy();
-                        return null;  // nothing will take it
+                        Log.i("picture from " + authority(uri) + " is over " + (limit >> 20) + " MiB: skipped");
+                        return null;
                     }
                 }
             }
-            if (p.waitFor() != 0 || out.size() == 0)
+            byte[] err;
+            try (InputStream e = p.getErrorStream()) {
+                err = e.readAllBytes();
+            }
+            int status = p.waitFor();
+            if (status != 0 || out.size() == 0) {
+                String why = new String(err).trim();
+                int nl = why.indexOf('\n');
+                Log.i("content " + command + " " + authority(uri) + " failed (" + status + "): "
+                        + (nl > 0 ? why.substring(0, nl) : why));
                 return null;
-            return new Clip(mime, out.toByteArray(), f.time);
-        } catch (IOException | InterruptedException e) {
-            Log.i("can't read the picture: " + e);
+            }
+            return out.toByteArray();
+        } catch (IOException | InterruptedException | RuntimeException e) {
+            Log.i("content " + command + " " + authority(uri) + ": " + e);
             return null;
         }
     }
 
     private void changed() {
-        Found f = read();
+        Found f;
+        try {
+            f = read();
+        } catch (RuntimeException e) {
+            Log.i("can't read the clipboard: " + e);
+            return;
+        }
         if (f == null)
             return;
         if (f.text != null) {
@@ -182,16 +229,27 @@ public final class Main {
             return;
         }
         new Thread(() -> {
-            Clip c = load(f);
-            if (c != null)
-                main.post(() -> copied(c));
+            try {
+                Clip c = load(f);
+                if (c != null)
+                    main.post(() -> copied(c));
+            } catch (RuntimeException e) {
+                // Not worth the daemon.
+                Log.i("can't read the picture: " + e);
+            }
         }, "picture").start();
     }
 
     private void copied(Clip c) {
+        Log.i("copied " + describe(c));
         recent.current(c);
         for (Link l : new ArrayList<>(links))
             l.apply(l.session.copied(c));
+    }
+
+    // What a clip is, never what it says.
+    private static String describe(Clip c) {
+        return (c.isText() ? "text" : c.mime) + ", " + c.data.length + " bytes";
     }
 
     // Puts clips in the clipboard one after another, the last one staying.
@@ -378,6 +436,7 @@ public final class Main {
                         out.add(a.bytes);
                         break;
                     case Action.SET_CLIPBOARD:
+                        Log.i("from " + session.peerName() + ": " + describe(a.clip));
                         put(a.clip);
                         recent.current(a.clip);
                         for (Link l : new ArrayList<>(links))
