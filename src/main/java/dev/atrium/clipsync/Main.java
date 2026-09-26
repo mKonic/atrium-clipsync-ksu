@@ -58,6 +58,9 @@ public final class Main {
         this.name = n != null ? n : android.os.Build.MODEL;
     }
 
+    // Deprecated for apps, whose main looper the framework makes; a process
+    // started by app_process has to make its own.
+    @SuppressWarnings("deprecation")
     public static void main(String[] args) throws Exception {
         Looper.prepareMainLooper();
         File state = new File(args.length > 0 ? args[0] : ".");

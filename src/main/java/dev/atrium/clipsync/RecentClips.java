@@ -96,6 +96,11 @@ final class RecentClips {
             Log.i("couldn't save history: " + e);
             return;
         }
+        // What was copied: for this user only.
+        tmp.setReadable(false, false);
+        tmp.setReadable(true, true);
+        tmp.setWritable(false, false);
+        tmp.setWritable(true, true);
         if (!tmp.renameTo(file))
             Log.i("couldn't replace " + file);
     }

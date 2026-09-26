@@ -20,6 +20,8 @@ HOME_DIR=/data/user_de/0/com.android.shell/atrium-clipsync
         if [ -f "$HOME_DIR/log" ] && [ "$(stat -c %s "$HOME_DIR/log")" -gt 1048576 ]; then
             mv "$HOME_DIR/log" "$HOME_DIR/log.old"
         fi
+        touch "$HOME_DIR/log"
+        chmod 600 "$HOME_DIR/log"
         su 2000 -c "CLASSPATH=$HOME_DIR/clipsync.dex exec app_process /system/bin dev.atrium.clipsync.Main $HOME_DIR" \
             >> "$HOME_DIR/log" 2>&1
         sleep 5
