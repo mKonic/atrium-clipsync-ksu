@@ -49,6 +49,7 @@ public final class Main {
     private final List<Link> links = new ArrayList<>();
     private final ArrayDeque<Clip> pendingSets = new ArrayDeque<>();
     private boolean setting;
+    private Screenshots screenshots;  // kept: its observers stop when collected
 
     private Main(Context ctx, File state) {
         this.ctx = ctx;
@@ -98,6 +99,8 @@ public final class Main {
             Log.i("can't read the clipboard: " + e);
         }
         clipboard.addPrimaryClipChangedListener(this::changed);
+        screenshots = new Screenshots(main, this::copied);
+        screenshots.start();
         Thread t = new Thread(this::serve, "rfcomm");
         t.setDaemon(true);
         t.start();
