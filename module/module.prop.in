@@ -1,0 +1,7 @@
+id=atrium-clipsync
+name=atrium clipboard sync
+version=@NAME@
+versionCode=@CODE@
+author=mkonic
+description=Shares the clipboard with an atrium desktop over Bluetooth while they are connected.
+updateJson=https://github.com/mKonic/atrium-clipsync-ksu/releases/latest/download/update.json
