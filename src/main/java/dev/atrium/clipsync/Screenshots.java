@@ -17,11 +17,16 @@ import java.util.function.Consumer;
 // clipboard, so the PC never saw it; this hands each one over as it is
 // saved. The phone's own clipboard is left alone.
 final class Screenshots {
-    private static final String[] FOLDERS = {"/sdcard/Pictures/Screenshots", "/sdcard/DCIM/Screenshots"};
+    // Screenshots land in a folder named for them under one of these: the
+    // system's (Pictures/Screenshots) and others' (a game mode's "Game
+    // Space Screenshot"), some made only with their first screenshot.
+    private static final String[] ROOTS = {"/sdcard/Pictures", "/sdcard/DCIM"};
 
     private final Handler main;
     private final Consumer<Clip> taken;
+    // Kept: an observer stops when it is collected.
     private final List<FileObserver> observers = new ArrayList<>();
+    private final java.util.Set<String> watched = new java.util.HashSet<>();
 
     Screenshots(Handler main, Consumer<Clip> taken) {
         this.main = main;
@@ -29,23 +34,43 @@ final class Screenshots {
     }
 
     void start() {
-        for (String path : FOLDERS) {
-            File dir = new File(path);
-            if (!dir.isDirectory())
+        for (String path : ROOTS) {
+            File root = new File(path);
+            if (!root.isDirectory())
                 continue;
-            // Saved through MediaStore: written as a hidden pending file,
-            // then renamed (MOVED_TO), or written in place (CLOSE_WRITE).
-            FileObserver o = new FileObserver(dir, FileObserver.CLOSE_WRITE | FileObserver.MOVED_TO) {
+            File[] dirs = root.listFiles(File::isDirectory);
+            if (dirs != null)
+                for (File d : dirs)
+                    consider(d);
+            // A screenshot folder made later.
+            FileObserver o = new FileObserver(root, FileObserver.CREATE | FileObserver.MOVED_TO) {
                 @Override
                 public void onEvent(int event, String name) {
-                    if (name != null && !name.startsWith(".") && mime(name) != null)
-                        read(new File(dir, name));
+                    File d = name != null ? new File(root, name) : null;
+                    if (d != null && d.isDirectory())
+                        consider(d);
                 }
             };
             o.startWatching();
             observers.add(o);
-            Log.i("watching " + path);
         }
+    }
+
+    private synchronized void consider(File dir) {
+        if (!dir.getName().toLowerCase(java.util.Locale.ROOT).contains("screenshot") || !watched.add(dir.getPath()))
+            return;
+        // Saved through MediaStore: written as a hidden pending file, then
+        // renamed (MOVED_TO), or written in place (CLOSE_WRITE).
+        FileObserver o = new FileObserver(dir, FileObserver.CLOSE_WRITE | FileObserver.MOVED_TO) {
+            @Override
+            public void onEvent(int event, String name) {
+                if (name != null && !name.startsWith(".") && mime(name) != null)
+                    read(new File(dir, name));
+            }
+        };
+        o.startWatching();
+        observers.add(o);
+        Log.i("watching " + dir);
     }
 
     static String mime(String name) {
