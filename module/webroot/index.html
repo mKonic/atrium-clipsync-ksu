@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>atrium link</title>
+<style>
+  :root { color-scheme: light dark; --bg: #f4f5f8; --card: #fff; --fg: #1c1f26; --dim: #6b7280; --accent: #4f6bd8; --ok: #2f9e66; --bad: #c2453d; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #14161b; --card: #1e2128; --fg: #e8eaf0; --dim: #9aa1ad; --accent: #7d95f0; --ok: #4cc28a; --bad: #e0675f; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg); font: 15px/1.45 system-ui, sans-serif; }
+  h1 { font-size: 20px; margin: 8px 0 16px; }
+  .card { background: var(--card); border-radius: 14px; padding: 16px; margin-bottom: 12px; }
+  .row { display: flex; align-items: center; gap: 12px; }
+  .grow { flex: 1; min-width: 0; }
+  .dim { color: var(--dim); font-size: 13px; }
+  .code { font: 600 40px/1.1 ui-monospace, monospace; letter-spacing: 6px; text-align: center; margin: 12px 0; }
+  button { border: 0; border-radius: 10px; padding: 10px 16px; font: inherit; background: var(--accent); color: #fff; }
+  button.plain { background: transparent; color: var(--accent); padding: 6px 8px; }
+  button.bad { background: var(--bad); }
+  .buttons { display: flex; gap: 10px; justify-content: flex-end; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--dim); flex: none; }
+  .dot.on { background: var(--ok); }
+  .empty { color: var(--dim); }
+  .err { color: var(--bad); font-size: 13px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<h1>atrium link</h1>
+
+<div class="card" id="pairing"></div>
+
+<div class="card">
+  <div class="row"><div class="grow"><b>Paired PCs</b></div></div>
+  <div id="pcs"></div>
+</div>
+
+<p class="dim" id="footer"></p>
+
+<script>
+// KernelSU runs these as root. The daemon reads `command` and rewrites
+// `status.json` in its state directory.
+const DIR = "/data/user_de/0/com.android.shell/atrium-clipsync";
+let seq = 0;
+
+function exec(cmd) {
+  return new Promise(resolve => {
+    const cb = "cb" + (++seq);
+    window[cb] = (code, out, err) => { delete window[cb]; resolve({ code, out, err }); };
+    try { ksu.exec(cmd, "{}", cb); } catch (e) { resolve({ code: 1, out: "", err: String(e) }); }
+  });
+}
+
+function command(c) {
+  // The daemon watches for a finished write; it must be able to delete it.
+  return exec(`printf '%s' '${c}' > ${DIR}/command.tmp && mv ${DIR}/command.tmp ${DIR}/command`).then(refresh);
+}
+
+function el(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  Object.assign(e, attrs || {});
+  for (const k of kids) e.append(k);
+  return e;
+}
+
+function render(s) {
+  const p = document.getElementById("pairing");
+  p.replaceChildren();
+  const pairing = s.pairing || {};
+  if (pairing.code) {
+    p.append(
+      el("div", {}, "Pairing with ", el("b", {}, pairing.pc || "a PC")),
+      el("div", { className: "code" }, pairing.code),
+      el("div", { className: "dim" }, "Accept if atrium shows the same code."),
+      el("div", { className: "buttons" },
+        el("button", { className: "plain", onclick: () => command("reject") }, "Reject"),
+        el("button", { onclick: () => command("accept") }, "Accept")));
+  } else if (pairing.open) {
+    const left = Math.max(0, Math.round((pairing.until - Date.now()) / 1000));
+    p.append(
+      el("div", {}, el("b", {}, "Waiting for a PC")),
+      el("div", { className: "dim" }, `On the PC: Settings › Phone › Pair. Open for ${left} s.`),
+      el("div", { className: "buttons" }, el("button", { className: "plain", onclick: () => command("cancel") }, "Cancel")));
+  } else {
+    p.append(
+      el("div", { className: "row" },
+        el("div", { className: "grow" }, el("b", {}, "Pair a PC"),
+          el("div", { className: "dim" }, "Send this phone's audio to atrium over Wi-Fi.")),
+        el("button", { onclick: () => command("pair") }, "Pair")));
+  }
+  if (s.error) p.append(el("div", { className: "err" }, "Last: " + s.error));
+
+  const list = document.getElementById("pcs");
+  list.replaceChildren();
+  if (!s.pcs || !s.pcs.length) list.append(el("p", { className: "empty" }, "None yet."));
+  for (const pc of s.pcs || []) {
+    const state = pc.streaming ? "Playing this phone's audio" : pc.connected ? "Connected" : "Not connected";
+    list.append(el("div", { className: "row", style: "margin-top:12px" },
+      el("span", { className: "dot" + (pc.connected ? " on" : "") }),
+      el("div", { className: "grow" }, pc.name || "PC", el("div", { className: "dim" }, state)),
+      el("button", { className: "plain", onclick: () => { if (confirm(`Forget ${pc.name}?`)) command("forget " + pc.id); } }, "Forget")));
+  }
+  document.getElementById("footer").textContent = `${s.name} · port ${s.port}`;
+}
+
+async function refresh() {
+  const r = await exec(`cat ${DIR}/status.json`);
+  if (r.code !== 0) {
+    document.getElementById("pairing").replaceChildren(el("div", { className: "err" }, "The daemon isn't running."));
+    return;
+  }
+  try { render(JSON.parse(r.out)); } catch (e) { /* half-written: next tick */ }
+}
+
+refresh();
+setInterval(refresh, 1000);
+</script>
+</body>
+</html>

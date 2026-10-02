@@ -50,6 +50,7 @@ public final class Main {
     private final ArrayDeque<Clip> pendingSets = new ArrayDeque<>();
     private boolean setting;
     private Screenshots screenshots;  // kept: its observers stop when collected
+    private final LanLink lan;
 
     private Main(Context ctx, File state) {
         this.ctx = ctx;
@@ -59,6 +60,7 @@ public final class Main {
         BluetoothAdapter adapter = adapter();
         String n = adapter != null ? adapter.getName() : null;
         this.name = n != null ? n : android.os.Build.MODEL;
+        this.lan = new LanLink(ctx, main, state, name);
     }
 
     // Deprecated for apps, whose main looper the framework makes; a process
@@ -77,7 +79,11 @@ public final class Main {
         }
         File state = new File(args.length > 0 ? args[0] : ".");
         Main m = new Main(Env.context(), state);
-        m.start();
+        // "lan": the network link alone, for testing it beside a running daemon.
+        if (args.length > 1 && args[1].equals("lan"))
+            m.lan.start();
+        else
+            m.start();
         Looper.loop();
         lock.close();
     }
@@ -104,6 +110,7 @@ public final class Main {
         Thread t = new Thread(this::serve, "rfcomm");
         t.setDaemon(true);
         t.start();
+        lan.start();
     }
 
     // --- the clipboard ---------------------------------------------------------

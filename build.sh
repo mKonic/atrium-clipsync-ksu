@@ -11,9 +11,10 @@ MAIN="$HERE/src/main/java/dev/atrium/clipsync"
 
 if [ "${1:-}" = test ]; then
     rm -rf "$OUT/test" && mkdir -p "$OUT/test"
-    javac -nowarn -d "$OUT/test" "$MAIN/Protocol.java" "$MAIN/Session.java" \
+    javac -nowarn -d "$OUT/test" "$MAIN/Protocol.java" "$MAIN/Session.java" "$MAIN/Crypto.java" "$MAIN/Link.java" \
         "$HERE"/src/test/java/dev/atrium/clipsync/*.java
-    exec java -cp "$OUT/test" dev.atrium.clipsync.SessionTest
+    java -cp "$OUT/test" dev.atrium.clipsync.SessionTest
+    exec java -cp "$OUT/test" dev.atrium.clipsync.LinkTest
 fi
 
 jar=$(ls -d "$SDK"/platforms/android-* | sort -V | tail -1)/android.jar
@@ -26,6 +27,7 @@ javac -nowarn --release 17 -cp "$jar" -d "$OUT/classes" "$MAIN"/*.java
 mv "$OUT/module/classes.dex" "$OUT/module/clipsync.dex"
 
 cp "$HERE"/module/*.sh "$OUT/module/"
+cp -r "$HERE"/module/webroot "$OUT/module/"
 sed -e "s/@NAME@/$("$HERE/scripts/version.sh" name)/" -e "s/@CODE@/$("$HERE/scripts/version.sh" code)/" \
     "$HERE/module/module.prop.in" > "$OUT/module/module.prop"
 rm -f "$OUT/atrium-clipsync.zip"
