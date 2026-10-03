@@ -24,7 +24,8 @@ public final class Link {
 
     public static final int HELLO = 1, PAIR_COMMIT = 2, PAIR_KEY = 3, PAIR_REVEAL = 4, PAIR_ACCEPT = 5,
             PAIR_REJECT = 6, AUTH = 7, PROOF = 8, UNKNOWN = 9, REFUSED = 10,
-            AUDIO_START = 16, AUDIO_STOP = 17, AUDIO_STATE = 18, MEDIA = 19, MEDIA_COMMAND = 20;
+            AUDIO_START = 16, AUDIO_STOP = 17, AUDIO_STATE = 18, MEDIA = 19, MEDIA_COMMAND = 20,
+            DISCONNECT = 21;
 
     public static final int AUDIO_STOPPED = 0, AUDIO_STREAMING = 1, AUDIO_FAILED = 2;
 

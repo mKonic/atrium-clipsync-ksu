@@ -28,12 +28,15 @@ import java.util.concurrent.LinkedBlockingQueue;
 // Paired PCs may ask for the phone's audio (AudioSender).
 //
 // The module's WebUI talks to it through two files in the state directory:
-// it writes `command` ("pair", "accept", "reject", "forget <id>"), and reads
+// it writes `command` ("pair", "cancel", "accept", "reject", "connect <id>",
+// "disconnect <id>", "forget <id>"), and reads
 // `status.json`, rewritten on every change. Pairing is open for
 // PAIR_WINDOW_MS after "pair". The paired PCs are in `paired`, one per line:
 // hex id, hex key, name.
 final class LanLink {
     private static final long PAIR_WINDOW_MS = 120_000;
+    // How long "connect" asks the PC (over mDNS: the PC connects, not us).
+    private static final long CALL_MS = 60_000;
 
     private final Context ctx;
     private final Handler main;
@@ -49,6 +52,9 @@ final class LanLink {
     private String code;
     private String lastError = "";
     private FileObserver observer;  // kept: it stops when collected
+    private Mdns mdns;
+    private String callFor = "";  // the PC asked to connect
+    private long callUntil;
 
     LanLink(Context ctx, Handler main, File dir, String name) {
         this.ctx = ctx;
@@ -145,6 +151,15 @@ final class LanLink {
             for (Conn k : conns)
                 k.link.setPairing(true);
             main.postDelayed(this::writeStatus, PAIR_WINDOW_MS + 100);
+        } else if (c.startsWith("connect ")) {
+            callFor = c.substring(8).trim();
+            callUntil = System.currentTimeMillis() + CALL_MS;
+            main.postDelayed(this::writeStatus, CALL_MS + 100);
+        } else if (c.startsWith("disconnect ")) {
+            String pc = c.substring(11).trim();
+            for (Conn k : new ArrayList<>(conns))
+                if (k.link.ready() && Crypto.hex(k.link.peerId()).equals(pc))
+                    k.disconnect();
         } else if (c.equals("cancel")) {
             pairUntil = 0;
             if (confirming != null)
@@ -169,7 +184,25 @@ final class LanLink {
         return System.currentTimeMillis() < pairUntil;
     }
 
+    private boolean calling(String pc) {
+        return callFor.equals(pc) && System.currentTimeMillis() < callUntil;
+    }
+
+    // What mDNS says besides the id (atrium's link_core.hpp has the keys).
+    private void updateTxt() {
+        if (mdns == null)
+            return;
+        List<String> t = new ArrayList<>();
+        if (pairingOpen())
+            t.add("pair=1");
+        if (calling(callFor))
+            t.add("call=" + callFor);
+        mdns.setTxt(t.toArray(new String[0]));
+    }
+
+    // Also keeps mDNS saying the same.
     private void writeStatus() {
+        updateTxt();
         try {
             JSONObject s = new JSONObject();
             s.put("name", name);
@@ -189,6 +222,7 @@ final class LanLink {
                 }
                 p.put("connected", connected);
                 p.put("streaming", streaming);
+                p.put("calling", !connected && calling(e.getKey()));
                 pcs.put(p);
             }
             s.put("pcs", pcs);
@@ -252,7 +286,8 @@ final class LanLink {
     }
 
     private void announce() {
-        new Mdns(name, Link.SERVICE_TYPE, port, id).start();
+        mdns = new Mdns(name, Link.SERVICE_TYPE, port, id);
+        mdns.start();
     }
 
     private void accepted(Socket s) {
@@ -349,6 +384,8 @@ final class LanLink {
                         break;
                     case Link.Event.READY:
                         Log.i("lan: ready with " + link.peerName());
+                        if (callFor.equals(Crypto.hex(link.peerId())))
+                            callUntil = 0;  // answered
                         // The name may have changed since pairing.
                         String[] p = paired.get(Crypto.hex(link.peerId()));
                         if (p != null && !p[1].equals(link.peerName())) {
@@ -364,7 +401,7 @@ final class LanLink {
                     case Link.Event.CLOSE:
                         Log.i("lan: closing: " + e.text);
                         lastError = e.text;
-                        close();
+                        finish();
                         return;
                     default:
                 }
@@ -428,6 +465,21 @@ final class LanLink {
             body[0] = (byte) state;
             System.arraycopy(w, 0, body, 1, w.length);
             apply(link.message(Link.AUDIO_STATE, body));
+        }
+
+        // The user's: the PC stays away until asked back.
+        void disconnect() {
+            stopAudio();
+            apply(link.message(Link.DISCONNECT, new byte[0]));
+            finish();
+        }
+
+        // Closes once what's queued is out (a REFUSED or UNKNOWN tells the
+        // PC why), or after a while if the PC isn't taking it.
+        void finish() {
+            stopAudio();
+            out.add(new byte[0]);  // the writer closes when it gets here
+            main.postDelayed(this::close, 2000);
         }
 
         void close() {

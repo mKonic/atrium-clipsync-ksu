@@ -25,7 +25,8 @@ final class Mdns {
     private final String type;      // "_atrium-link._tcp.local"
     private final String instance;  // "<name>.<type>"
     private final String host;      // "atrium-<id>.local"
-    private final String txt;
+    private final String id;
+    private volatile String[] txt;
     private final int port;
     private volatile boolean running = true;
     private MulticastSocket socket;
@@ -35,8 +36,25 @@ final class Mdns {
         this.type = serviceType.replaceAll("\\.$", "") + ".local";
         this.instance = label(name) + "." + type;
         this.host = "atrium-" + Crypto.hex(id).substring(0, 8) + ".local";
-        this.txt = "id=" + Crypto.hex(id);
+        this.id = "id=" + Crypto.hex(id);
+        this.txt = new String[] {this.id};
         this.port = port;
+    }
+
+    // The TXT record's other strings ("pair=1", "call=<id>"), said at once.
+    void setTxt(String... extra) {
+        String[] t = new String[1 + extra.length];
+        t[0] = id;
+        System.arraycopy(extra, 0, t, 1, extra.length);
+        if (java.util.Arrays.equals(t, txt))
+            return;
+        txt = t;
+        new Thread(() -> {
+            try {
+                send(InetAddress.getByName(GROUP), true);
+            } catch (IOException ignored) {
+            }
+        }, "mdns-txt").start();
     }
 
     void start() {
@@ -63,7 +81,7 @@ final class Mdns {
         }
         Thread announcer = new Thread(() -> {
             while (running) {
-                send(group);
+                send(group, false);
                 try {
                     Thread.sleep(ANNOUNCE_MS);
                 } catch (InterruptedException e) {
@@ -82,7 +100,7 @@ final class Mdns {
             if (!announcer.isAlive())
                 announcer.start();
             else
-                send(group);  // a new network: say so now
+                send(group, false);  // a new network: say so now
             Log.i("lan: mdns on " + wifi.getName() + " as " + instance);
             while (running) {
                 DatagramPacket p = new DatagramPacket(buf, buf.length);
@@ -92,7 +110,7 @@ final class Mdns {
                     break;  // the interface went away: find it again
                 }
                 if (asksForUs(buf, p.getLength()))
-                    send(group);
+                    send(group, false);
             }
             socket.close();
             sleep(1000);
@@ -139,14 +157,14 @@ final class Mdns {
         return null;
     }
 
-    private synchronized void send(InetAddress group) {
+    private synchronized void send(InetAddress group, boolean force) {
         MulticastSocket s = socket;
         NetworkInterface wifi = wifi();
         Inet4Address ip = wifi == null ? null : ipv4(wifi);
         if (s == null || ip == null)
             return;
         long now = System.currentTimeMillis();
-        if (now - lastSent < 1000)
+        if (!force && now - lastSent < 1000)
             return;  // queries come in bursts
         lastSent = now;
         byte[] d = response(ip);
@@ -177,10 +195,12 @@ final class Mdns {
         put16(srv, port);
         bytes(srv, name(host));
         record(o, instance, SRV, IN | FLUSH, srv.toByteArray());
-        byte[] t = txt.getBytes(StandardCharsets.UTF_8);
         ByteArrayOutputStream tx = new ByteArrayOutputStream();
-        tx.write(t.length);
-        bytes(tx, t);
+        for (String str : txt) {
+            byte[] t = str.getBytes(StandardCharsets.UTF_8);
+            tx.write(t.length);
+            bytes(tx, t);
+        }
         record(o, instance, TXT, IN | FLUSH, tx.toByteArray());
         record(o, host, A, IN | FLUSH, ip.getAddress());
         return o.toByteArray();

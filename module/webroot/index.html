@@ -17,6 +17,7 @@
   .code { font: 600 40px/1.1 ui-monospace, monospace; letter-spacing: 6px; text-align: center; margin: 12px 0; }
   button { border: 0; border-radius: 10px; padding: 10px 16px; font: inherit; background: var(--accent); color: #fff; }
   button.plain { background: transparent; color: var(--accent); padding: 6px 8px; }
+  button:disabled { opacity: 0.5; }
   button.bad { background: var(--bad); }
   .buttons { display: flex; gap: 10px; justify-content: flex-end; }
   .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--dim); flex: none; }
@@ -78,7 +79,7 @@ function render(s) {
   } else if (pairing.open) {
     p.append(
       el("div", {}, el("b", {}, "Waiting for a PC")),
-      el("div", { className: "dim" }, "On the PC: Settings › Phone › Pair. Open for ", el("span", { id: "left" }), " s."),
+      el("div", { className: "dim" }, "On the PC: Settings › Phone, then Pair next to this phone under Nearby. Open for ", el("span", { id: "left" }), " s."),
       el("div", { className: "buttons" }, el("button", { className: "plain", onclick: () => command("cancel") }, "Cancel")));
   } else {
     p.append(
@@ -93,10 +94,14 @@ function render(s) {
   list.replaceChildren();
   if (!s.pcs || !s.pcs.length) list.append(el("p", { className: "empty" }, "None yet."));
   for (const pc of s.pcs || []) {
-    const state = pc.streaming ? "Playing this phone's audio" : pc.connected ? "Connected" : "Not connected";
+    const state = pc.streaming ? "Playing this phone's audio" : pc.connected ? "Connected"
+      : pc.calling ? "Asking it to connect…" : "Not connected";
     list.append(el("div", { className: "row", style: "margin-top:12px" },
       el("span", { className: "dot" + (pc.connected ? " on" : "") }),
       el("div", { className: "grow" }, pc.name || "PC", el("div", { className: "dim" }, state)),
+      pc.connected
+        ? el("button", { className: "plain", onclick: () => command("disconnect " + pc.id) }, "Disconnect")
+        : el("button", { className: "plain", disabled: pc.calling, onclick: () => command("connect " + pc.id) }, "Connect"),
       el("button", { className: "plain", onclick: () => { if (confirm(`Forget ${pc.name}?`)) command("forget " + pc.id); } }, "Forget")));
   }
   document.getElementById("footer").textContent = `${s.name} · port ${s.port}`;
