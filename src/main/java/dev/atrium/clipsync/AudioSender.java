@@ -1,7 +1,9 @@
 package dev.atrium.clipsync;
 
 import android.content.Context;
+import android.media.AudioDeviceInfo;
 import android.media.AudioFormat;
+import android.media.AudioManager;
 import android.media.AudioRecord;
 import android.media.MediaRecorder;
 import android.os.Process;
@@ -44,7 +46,9 @@ final class AudioSender {
     private DatagramSocket socket;
     private AudioRecord record;
     private Loopback loopback;
-    private Thread capture, nacks;
+    private Thread capture, nacks, volume;
+    // The phone's volume as a gain, for a capture that comes before it.
+    private volatile float gain = 1f;
     private final byte[][] sent = new byte[HISTORY][];
     private final int[] sentSeq = new int[HISTORY];
     // The next datagram's seq. It goes on from the session's last stream:
@@ -102,6 +106,12 @@ final class AudioSender {
             release();
             throw e instanceof IOException ? (IOException) e : new IOException(e.toString(), e);
         }
+        if (loopback != null) {
+            gain = phoneGain((AudioManager) ctx.getSystemService(Context.AUDIO_SERVICE));
+            volume = new Thread(this::followVolume, "volume");
+            volume.setDaemon(true);
+            volume.start();
+        }
         capture = new Thread(this::capture, "audio");
         nacks = new Thread(this::nacks, "nacks");
         capture.start();
@@ -140,6 +150,52 @@ final class AudioSender {
             socket.close();
     }
 
+    // A policy mix is recorded at full scale: the volume buttons would do
+    // nothing. They set this gain instead, read off the button's stream
+    // (the call's while an app holds a call's mode, as games with voice
+    // chat do) and Android's own curve for it, full volume being 0 dB.
+    private static float phoneGain(AudioManager am) {
+        try {
+            int mode = am.getMode();
+            int stream = mode == AudioManager.MODE_IN_COMMUNICATION || mode == AudioManager.MODE_IN_CALL
+                    ? AudioManager.STREAM_VOICE_CALL : AudioManager.STREAM_MUSIC;
+            int index = am.getStreamVolume(stream), max = am.getStreamMaxVolume(stream);
+            if (am.isStreamMute(stream) || index <= 0)
+                return 0f;
+            float db = am.getStreamVolumeDb(stream, index, AudioDeviceInfo.TYPE_BUILTIN_SPEAKER)
+                    - am.getStreamVolumeDb(stream, max, AudioDeviceInfo.TYPE_BUILTIN_SPEAKER);
+            return Float.isNaN(db) ? 1f : (float) Math.min(1.0, Math.pow(10, db / 20));
+        } catch (RuntimeException e) {
+            return 1f;
+        }
+    }
+
+    private void followVolume() {
+        AudioManager am = (AudioManager) ctx.getSystemService(Context.AUDIO_SERVICE);
+        while (running) {
+            gain = phoneGain(am);
+            try {
+                Thread.sleep(500);
+            } catch (InterruptedException e) {
+                return;
+            }
+        }
+    }
+
+    // In place, little-endian s16, ramping from `from` to `to` over the
+    // buffer so a change doesn't click.
+    private static void scale(byte[] pcm, float from, float to) {
+        int samples = pcm.length / 2;
+        float step = (to - from) / samples;
+        float g = from;
+        for (int i = 0; i < pcm.length; i += 2, g += step) {
+            int s = (short) ((pcm[i] & 0xff) | pcm[i + 1] << 8);
+            int v = Math.round(s * g);
+            pcm[i] = (byte) v;
+            pcm[i + 1] = (byte) (v >> 8);
+        }
+    }
+
     private void capture() {
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO);
         Cipher cipher = Crypto.cipher();
@@ -148,6 +204,7 @@ final class AudioSender {
         boolean gap = true;  // the first packet starts the stream
         String why = null;
         long packets = 0;
+        float applied = gain;
         while (running) {
             int got = 0;
             while (got < pcm.length && running) {
@@ -163,6 +220,12 @@ final class AudioSender {
             }
             if (!running)
                 break;
+            if (loopback != null) {
+                float g = gain;
+                if (g != 1f || applied != 1f)
+                    scale(pcm, applied, g);
+                applied = g;
+            }
             if (isSilent(pcm)) {
                 silent += frames;
                 if (silent > SILENT_AFTER) {
