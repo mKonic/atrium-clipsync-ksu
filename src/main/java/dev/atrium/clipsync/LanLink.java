@@ -29,7 +29,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 //
 // The module's WebUI talks to it through two files in the state directory:
 // it writes `command` ("pair", "cancel", "accept", "reject", "connect <id>",
-// "disconnect <id>", "forget <id>"), and reads
+// "disconnect <id>", "auto <id> on|off", "forget <id>"), and reads
 // `status.json`, rewritten on every change. Pairing is open for
 // PAIR_WINDOW_MS after "pair". The paired PCs are in `paired`, one per line:
 // hex id, hex key, name.
@@ -44,6 +44,10 @@ final class LanLink {
     private final String name;
     private final byte[] id;
     private final Map<String, String[]> paired = new LinkedHashMap<>();  // hex id -> {hex key, name}
+    // PCs that may connect only when asked (Connect on either end), not by
+    // themselves: in `manual`, one id a line.
+    private final java.util.Set<String> manual = new java.util.HashSet<>();
+    private final File manualFile;
     private final List<Conn> conns = new ArrayList<>();
     private final MediaBridge media;
     private int port;
@@ -64,6 +68,7 @@ final class LanLink {
         this.pairedFile = new File(dir, "paired");
         this.statusFile = new File(dir, "status.json");
         this.commandFile = new File(dir, "command");
+        this.manualFile = new File(dir, "manual");
         this.id = loadId(new File(dir, "id"));
         this.media = new MediaBridge(ctx, main, body -> {
             for (Conn k : new ArrayList<>(conns))
@@ -98,6 +103,19 @@ final class LanLink {
             }
         } catch (IOException ignored) {
         }
+        try {
+            for (String line : Files.readAllLines(manualFile.toPath(), StandardCharsets.UTF_8))
+                if (paired.containsKey(line.trim()))
+                    manual.add(line.trim());
+        } catch (IOException ignored) {
+        }
+    }
+
+    private void saveManual() {
+        StringBuilder sb = new StringBuilder();
+        for (String pc : manual)
+            sb.append(pc).append('\n');
+        writeAtomically(manualFile, sb.toString());
     }
 
     private void savePaired() {
@@ -142,6 +160,8 @@ final class LanLink {
         try {
             c = new String(Files.readAllBytes(commandFile.toPath()), StandardCharsets.UTF_8).trim();
         } catch (IOException e) {
+            if (commandFile.exists())
+                Log.i("lan: can't read the command: " + e);
             return;
         }
         commandFile.delete();
@@ -160,6 +180,20 @@ final class LanLink {
             for (Conn k : new ArrayList<>(conns))
                 if (k.link.ready() && Crypto.hex(k.link.peerId()).equals(pc))
                     k.disconnect();
+        } else if (c.startsWith("auto ")) {
+            String[] a = c.split(" ");
+            if (a.length == 3 && paired.containsKey(a[1])) {
+                if (a[2].equals("on")) {
+                    manual.remove(a[1]);
+                    // A PC kept away by the switch may come now.
+                    callFor = a[1];
+                    callUntil = System.currentTimeMillis() + CALL_MS;
+                    main.postDelayed(this::writeStatus, CALL_MS + 100);
+                } else {
+                    manual.add(a[1]);
+                }
+                saveManual();
+            }
         } else if (c.equals("cancel")) {
             pairUntil = 0;
             if (confirming != null)
@@ -172,6 +206,8 @@ final class LanLink {
             String pc = c.substring(7).trim();
             if (paired.remove(pc) != null) {
                 savePaired();
+                if (manual.remove(pc))
+                    saveManual();
                 for (Conn k : new ArrayList<>(conns))
                     if (Crypto.hex(k.link.peerId()).equals(pc))
                         k.close();
@@ -223,6 +259,7 @@ final class LanLink {
                 p.put("connected", connected);
                 p.put("streaming", streaming);
                 p.put("calling", !connected && calling(e.getKey()));
+                p.put("auto", !manual.contains(e.getKey()));
                 pcs.put(p);
             }
             s.put("pcs", pcs);
@@ -415,6 +452,12 @@ final class LanLink {
             } else if (type == Link.AUDIO_STOP) {
                 stopAudio();
                 state(Link.AUDIO_STOPPED, "");
+            } else if (type == Link.WANT && body.length >= 1) {
+                String pc = Crypto.hex(link.peerId());
+                if (body[0] == 0 && manual.contains(pc)) {
+                    Log.i("lan: " + link.peerName() + " came by itself; it connects only when asked");
+                    disconnect();
+                }
             } else if (type == Link.MEDIA_COMMAND) {
                 long[] c = Link.unpackMediaCommand(body);
                 if (c != null)

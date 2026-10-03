@@ -18,6 +18,11 @@
   button { border: 0; border-radius: 10px; padding: 10px 16px; font: inherit; background: var(--accent); color: #fff; }
   button.plain { background: transparent; color: var(--accent); padding: 6px 8px; }
   button:disabled { opacity: 0.5; }
+  .toggle { margin: 6px 0 4px 22px; }
+  .toggle input { appearance: none; width: 40px; height: 24px; border-radius: 12px; background: var(--dim); position: relative; flex: none; margin: 0; }
+  .toggle input::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: left .15s; }
+  .toggle input:checked { background: var(--accent); }
+  .toggle input:checked::after { left: 19px; }
   button.bad { background: var(--bad); }
   .buttons { display: flex; gap: 10px; justify-content: flex-end; }
   .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--dim); flex: none; }
@@ -53,8 +58,9 @@ function exec(cmd) {
 }
 
 function command(c) {
-  // The daemon watches for a finished write; it must be able to delete it.
-  return exec(`printf '%s' '${c}' > ${DIR}/command.tmp && mv ${DIR}/command.tmp ${DIR}/command`).then(refresh);
+  // The daemon (the shell user, not root like this) watches for a
+  // finished write; it must be able to read it.
+  return exec(`printf '%s' '${c}' > ${DIR}/command.tmp && chown 2000:2000 ${DIR}/command.tmp && mv ${DIR}/command.tmp ${DIR}/command`).then(refresh);
 }
 
 function el(tag, attrs, ...kids) {
@@ -94,6 +100,8 @@ function render(s) {
   list.replaceChildren();
   if (!s.pcs || !s.pcs.length) list.append(el("p", { className: "empty" }, "None yet."));
   for (const pc of s.pcs || []) {
+    const auto = el("input", { type: "checkbox", checked: pc.auto !== false,
+      onchange: e => command(`auto ${pc.id} ${e.target.checked ? "on" : "off"}`) });
     const state = pc.streaming ? "Playing this phone's audio" : pc.connected ? "Connected"
       : pc.calling ? "Asking it to connect…" : "Not connected";
     list.append(el("div", { className: "row", style: "margin-top:12px" },
@@ -102,7 +110,11 @@ function render(s) {
       pc.connected
         ? el("button", { className: "plain", onclick: () => command("disconnect " + pc.id) }, "Disconnect")
         : el("button", { className: "plain", disabled: pc.calling, onclick: () => command("connect " + pc.id) }, "Connect"),
-      el("button", { className: "plain", onclick: () => { if (confirm(`Forget ${pc.name}?`)) command("forget " + pc.id); } }, "Forget")));
+      el("button", { className: "plain", onclick: () => { if (confirm(`Forget ${pc.name}?`)) command("forget " + pc.id); } }, "Forget")),
+      el("label", { className: "row toggle" },
+        el("div", { className: "grow" }, "Connect automatically",
+          el("div", { className: "dim" }, "Whenever it finds this phone. Off: only when you press Connect on either side.")),
+        auto));
   }
   document.getElementById("footer").textContent = `${s.name} · port ${s.port}`;
 }
