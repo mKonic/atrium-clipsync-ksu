@@ -58,7 +58,7 @@ final class LanLink {
     private FileObserver observer;  // kept: it stops when collected
     private Mdns mdns;
     private String callFor = "";  // the PC asked to connect
-    private long callUntil;
+    private long callUntil, callSeq;
 
     LanLink(Context ctx, Handler main, File dir, String name) {
         this.ctx = ctx;
@@ -174,6 +174,7 @@ final class LanLink {
         } else if (c.startsWith("connect ")) {
             callFor = c.substring(8).trim();
             callUntil = System.currentTimeMillis() + CALL_MS;
+            callSeq = System.currentTimeMillis() / 1000;
             main.postDelayed(this::writeStatus, CALL_MS + 100);
         } else if (c.startsWith("disconnect ")) {
             String pc = c.substring(11).trim();
@@ -188,6 +189,7 @@ final class LanLink {
                     // A PC kept away by the switch may come now.
                     callFor = a[1];
                     callUntil = System.currentTimeMillis() + CALL_MS;
+            callSeq = System.currentTimeMillis() / 1000;
                     main.postDelayed(this::writeStatus, CALL_MS + 100);
                 } else {
                     manual.add(a[1]);
@@ -231,8 +233,10 @@ final class LanLink {
         List<String> t = new ArrayList<>();
         if (pairingOpen())
             t.add("pair=1");
+        // A new value each time: avahi only reports a TXT record it hasn't
+        // got cached, and the last call's may still be.
         if (calling(callFor))
-            t.add("call=" + callFor);
+            t.add("call=" + callFor + "-" + callSeq);
         mdns.setTxt(t.toArray(new String[0]));
     }
 
