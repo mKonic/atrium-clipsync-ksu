@@ -14,11 +14,13 @@ import java.net.InetSocketAddress;
 
 import javax.crypto.Cipher;
 
-// The phone's whole audio output to one PC, until stopped. REMOTE_SUBMIX is
-// the output itself: while it is recorded Android plays nothing locally (no
-// speaker, no Bluetooth), and stopping gives the sound back. Shell holds
-// CAPTURE_AUDIO_OUTPUT, and the source takes no notice of apps opting out of
-// playback capture. Same as scrcpy's --audio-source=output.
+// The phone's whole audio output to one PC, until stopped. Loopback takes
+// it with an audio policy, so nothing plays on the phone, voice calls' mode
+// included; stopping gives the sound back. Where that can't register, it
+// records REMOTE_SUBMIX, the default output, as scrcpy's
+// --audio-source=output does (which loses the sound to the speaker while an
+// app is in a call's mode). Shell holds the permissions for both, and
+// neither takes notice of apps opting out of playback capture.
 //
 // Every 5 ms of audio is a datagram (see Link's datagrams). Digital silence
 // longer than SILENT_AFTER isn't sent; the next sound goes out flagged
@@ -41,6 +43,7 @@ final class AudioSender {
     private volatile boolean running = true;
     private DatagramSocket socket;
     private AudioRecord record;
+    private Loopback loopback;
     private Thread capture, nacks;
     private final byte[][] sent = new byte[HISTORY][];
     private final int[] sentSeq = new int[HISTORY];
@@ -69,7 +72,16 @@ final class AudioSender {
                 .build();
         int min = AudioRecord.getMinBufferSize(Link.RATE, AudioFormat.CHANNEL_IN_STEREO, AudioFormat.ENCODING_PCM_16BIT);
         try {
-            record = new AudioRecord.Builder()
+            try {
+                loopback = Loopback.open(ctx, Link.RATE);
+                record = loopback.record;
+                Log.i("audio: capturing through an audio policy");
+            } catch (Exception e) {
+                Throwable t = e instanceof java.lang.reflect.InvocationTargetException ? e.getCause() : e;
+                Log.i("audio: no audio policy (" + t + "), recording the default output");
+            }
+            if (record == null)
+                record = new AudioRecord.Builder()
                     .setContext(ctx)
                     .setAudioSource(MediaRecorder.AudioSource.REMOTE_SUBMIX)
                     .setAudioFormat(format)
@@ -111,6 +123,11 @@ final class AudioSender {
     }
 
     private synchronized void release() {
+        if (loopback != null) {
+            loopback.close();
+            loopback = null;
+            record = null;
+        }
         if (record != null) {
             try {
                 record.stop();
