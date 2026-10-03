@@ -1,8 +1,8 @@
-package dev.atrium.clipsync;
+package dev.atrium.link;
 
-import dev.atrium.clipsync.Protocol.Clip;
-import dev.atrium.clipsync.Protocol.Message;
-import dev.atrium.clipsync.Session.Action;
+import dev.atrium.link.Protocol.Clip;
+import dev.atrium.link.Protocol.Message;
+import dev.atrium.link.Session.Action;
 
 import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;

@@ -1,9 +1,9 @@
-package dev.atrium.clipsync;
+package dev.atrium.link;
 
 import android.os.FileObserver;
 import android.os.Handler;
 
-import dev.atrium.clipsync.Protocol.Clip;
+import dev.atrium.link.Protocol.Clip;
 
 import java.io.File;
 import java.io.IOException;

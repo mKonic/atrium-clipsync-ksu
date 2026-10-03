@@ -1,7 +1,6 @@
-package dev.atrium.clipsync;
+package dev.atrium.link;
 
 import android.content.Context;
-import android.os.FileObserver;
 import android.os.Handler;
 
 import org.json.JSONArray;
@@ -27,10 +26,10 @@ import java.util.concurrent.LinkedBlockingQueue;
 // listens on TCP, announced over mDNS as Link.SERVICE_TYPE; atrium connects.
 // Paired PCs may ask for the phone's audio (AudioSender).
 //
-// The module's WebUI talks to it through two files in the state directory:
-// it writes `command` ("pair", "cancel", "accept", "reject", "connect <id>",
-// "disconnect <id>", "auto <id> on|off", "forget <id>"), and reads
-// `status.json`, rewritten on every change. Pairing is open for
+// The Atrium Link app talks to it over Control: it sends commands ("pair",
+// "cancel", "accept", "reject", "connect <id>", "disconnect <id>",
+// "auto <id> on|off", "forget <id>") and gets the status, sent again on
+// every change. Pairing is open for
 // PAIR_WINDOW_MS after "pair". The paired PCs are in `paired`, one per line:
 // hex id, hex key, name.
 final class LanLink {
@@ -40,7 +39,7 @@ final class LanLink {
 
     private final Context ctx;
     private final Handler main;
-    private final File dir, pairedFile, statusFile, commandFile;
+    private final File dir, pairedFile;
     private final String name;
     private final byte[] id;
     private final Map<String, String[]> paired = new LinkedHashMap<>();  // hex id -> {hex key, name}
@@ -54,8 +53,8 @@ final class LanLink {
     private long pairUntil;
     private Conn confirming;  // the connection showing a pairing code
     private String code;
-    private String lastError = "";
-    private FileObserver observer;  // kept: it stops when collected
+    private String lastError = "";  // why the last pairing didn't, for the app
+    private Control control;
     private Mdns mdns;
     private String callFor = "";  // the PC asked to connect
     private long callUntil, callSeq;
@@ -66,8 +65,6 @@ final class LanLink {
         this.dir = dir;
         this.name = name;
         this.pairedFile = new File(dir, "paired");
-        this.statusFile = new File(dir, "status.json");
-        this.commandFile = new File(dir, "command");
         this.manualFile = new File(dir, "manual");
         this.id = loadId(new File(dir, "id"));
         this.media = new MediaBridge(ctx, main, body -> {
@@ -136,16 +133,10 @@ final class LanLink {
         }
     }
 
-    void start() {
-        commandFile.delete();
-        observer = new FileObserver(dir, FileObserver.CLOSE_WRITE | FileObserver.MOVED_TO) {
-            @Override
-            public void onEvent(int event, String path) {
-                if ("command".equals(path))
-                    main.post(LanLink.this::command);
-            }
-        };
-        observer.startWatching();
+    // `lock` is the daemon's own socket, where the app connects.
+    void start(android.net.LocalServerSocket lock) {
+        control = new Control(ctx, lock, main, this::command);
+        control.start();
         media.start();
         Thread t = new Thread(this::serve, "lan");
         t.setDaemon(true);
@@ -153,21 +144,14 @@ final class LanLink {
         writeStatus();
     }
 
-    // --- the WebUI -------------------------------------------------------------
+    // --- the app ---------------------------------------------------------------
 
-    private void command() {
-        String c;
-        try {
-            c = new String(Files.readAllBytes(commandFile.toPath()), StandardCharsets.UTF_8).trim();
-        } catch (IOException e) {
-            if (commandFile.exists())
-                Log.i("lan: can't read the command: " + e);
-            return;
-        }
-        commandFile.delete();
+    // From the app (Control), on the main thread.
+    private void command(String c) {
         Log.i("lan: command " + c);
         if (c.equals("pair")) {
             pairUntil = System.currentTimeMillis() + PAIR_WINDOW_MS;
+            lastError = "";
             for (Conn k : conns)
                 k.link.setPairing(true);
             main.postDelayed(this::writeStatus, PAIR_WINDOW_MS + 100);
@@ -222,6 +206,20 @@ final class LanLink {
         return System.currentTimeMillis() < pairUntil;
     }
 
+    // Link's reason, in the app's words.
+    private static String pairingError(String why) {
+        switch (why) {
+            case "a pairing came while not pairing":
+                return "A PC tried to pair before Pair was pressed here.";
+            case "pairing rejected":
+                return "Pairing was rejected here.";
+            case "pairing rejected on the other end":
+                return "Pairing was rejected on the PC.";
+            default:
+                return "Pairing stopped: " + why + ".";
+        }
+    }
+
     private boolean calling(String pc) {
         return callFor.equals(pc) && System.currentTimeMillis() < callUntil;
     }
@@ -243,6 +241,8 @@ final class LanLink {
     // Also keeps mDNS saying the same.
     private void writeStatus() {
         updateTxt();
+        if (control == null)
+            return;
         try {
             JSONObject s = new JSONObject();
             s.put("name", name);
@@ -275,7 +275,7 @@ final class LanLink {
                 pairing.put("pc", confirming.link.peerName());
             }
             s.put("pairing", pairing);
-            writeAtomically(statusFile, s.toString(1));
+            control.status(s.toString());
         } catch (JSONException e) {
             Log.i("lan: status: " + e);
         }
@@ -420,6 +420,7 @@ final class LanLink {
                         confirming = null;
                         code = null;
                         pairUntil = 0;
+                        lastError = "";
                         Log.i("lan: paired with " + link.peerName());
                         writeStatus();
                         break;
@@ -441,7 +442,8 @@ final class LanLink {
                         break;
                     case Link.Event.CLOSE:
                         Log.i("lan: closing: " + e.text);
-                        lastError = e.text;
+                        if (confirming == this || pairingOpen() || e.text.equals("a pairing came while not pairing"))
+                            lastError = pairingError(e.text);
                         finish();
                         return;
                     default:

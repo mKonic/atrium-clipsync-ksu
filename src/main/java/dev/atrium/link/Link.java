@@ -1,4 +1,4 @@
-package dev.atrium.clipsync;
+package dev.atrium.link;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;

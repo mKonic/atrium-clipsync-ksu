@@ -1,4 +1,4 @@
-package dev.atrium.clipsync;
+package dev.atrium.link;
 
 import java.text.SimpleDateFormat;
 import java.util.Date;

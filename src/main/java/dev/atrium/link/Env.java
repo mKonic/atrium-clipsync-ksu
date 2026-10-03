@@ -1,4 +1,4 @@
-package dev.atrium.clipsync;
+package dev.atrium.link;
 
 import android.app.Application;
 import android.app.Instrumentation;

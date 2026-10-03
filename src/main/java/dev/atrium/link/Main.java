@@ -1,4 +1,4 @@
-package dev.atrium.clipsync;
+package dev.atrium.link;
 
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothManager;
@@ -12,8 +12,8 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.PersistableBundle;
 
-import dev.atrium.clipsync.Protocol.Clip;
-import dev.atrium.clipsync.Session.Action;
+import dev.atrium.link.Protocol.Clip;
+import dev.atrium.link.Session.Action;
 
 import java.io.File;
 import java.io.IOException;
@@ -31,7 +31,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 // socket reads and writes happens on the main looper.
 public final class Main {
     // Our own clips carry this label, so their change events are skipped.
-    private static final String LABEL = "atrium-clipsync";
+    private static final String LABEL = "atrium-link";
     private static final String SUPPRESS_OVERLAY = "com.android.systemui.SUPPRESS_CLIPBOARD_OVERLAY";
     private static final String IS_REMOTE_DEVICE = "android.content.extra.IS_REMOTE_DEVICE";
     private static final String IS_SENSITIVE = "android.content.extra.IS_SENSITIVE";
@@ -71,7 +71,7 @@ public final class Main {
         // One at a time: a second would listen for the same service.
         android.net.LocalServerSocket lock;
         try {
-            lock = new android.net.LocalServerSocket("atrium-clipsync");
+            lock = new android.net.LocalServerSocket("atrium-link");
         } catch (IOException e) {
             Log.i("already running");
             System.exit(ALREADY_RUNNING);
@@ -80,9 +80,8 @@ public final class Main {
         File state = new File(args.length > 0 ? args[0] : ".");
         Main m = new Main(Env.context(), state);
         // "lan": the network link alone, for testing it beside a running daemon.
-        if (args.length > 1 && args[1].equals("lan"))
-            m.lan.start();
-        else
+        m.lan.start(lock);
+        if (args.length < 2 || !args[1].equals("lan"))
             m.start();
         Looper.loop();
         lock.close();
@@ -110,7 +109,6 @@ public final class Main {
         Thread t = new Thread(this::serve, "rfcomm");
         t.setDaemon(true);
         t.start();
-        lan.start();
     }
 
     // --- the clipboard ---------------------------------------------------------

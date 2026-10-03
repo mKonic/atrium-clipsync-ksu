@@ -29,7 +29,7 @@ jobs:
           {
             "version": "$(scripts/version.sh name)",
             "versionCode": $(scripts/version.sh code),
-            "zipUrl": "https://github.com/${{ github.repository }}/releases/download/$(scripts/version.sh name)/atrium-clipsync.zip",
+            "zipUrl": "https://github.com/${{ github.repository }}/releases/download/$(scripts/version.sh name)/atrium-link.zip",
             "changelog": "https://github.com/${{ github.repository }}/releases/tag/$(scripts/version.sh name)"
           }
           JSON
@@ -37,4 +37,4 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" build/atrium-clipsync.zip build/update.json --title "${GITHUB_REF_NAME}" --generate-notes
+        run: gh release create "${GITHUB_REF_NAME}" build/atrium-link.zip build/atrium-link.apk build/update.json --title "${GITHUB_REF_NAME}" --generate-notes

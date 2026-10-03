@@ -1,7 +1,7 @@
-package dev.atrium.clipsync;
+package dev.atrium.link;
 
-import dev.atrium.clipsync.Protocol.Clip;
-import dev.atrium.clipsync.Protocol.Message;
+import dev.atrium.link.Protocol.Clip;
+import dev.atrium.link.Protocol.Message;
 
 import java.util.ArrayList;
 import java.util.HashSet;
