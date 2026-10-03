@@ -76,10 +76,9 @@ function render(s) {
         el("button", { className: "plain", onclick: () => command("reject") }, "Reject"),
         el("button", { onclick: () => command("accept") }, "Accept")));
   } else if (pairing.open) {
-    const left = Math.max(0, Math.round((pairing.until - Date.now()) / 1000));
     p.append(
       el("div", {}, el("b", {}, "Waiting for a PC")),
-      el("div", { className: "dim" }, `On the PC: Settings › Phone › Pair. Open for ${left} s.`),
+      el("div", { className: "dim" }, "On the PC: Settings › Phone › Pair. Open for ", el("span", { id: "left" }), " s."),
       el("div", { className: "buttons" }, el("button", { className: "plain", onclick: () => command("cancel") }, "Cancel")));
   } else {
     p.append(
@@ -103,13 +102,31 @@ function render(s) {
   document.getElementById("footer").textContent = `${s.name} · port ${s.port}`;
 }
 
+// Redrawn only when the status changes: a button replaced under a finger
+// loses the tap.
+let shown = null, until = 0;
+
+function tick() {
+  const left = document.getElementById("left");
+  if (left) left.textContent = Math.max(0, Math.round((until - Date.now()) / 1000));
+}
+
 async function refresh() {
   const r = await exec(`cat ${DIR}/status.json`);
   if (r.code !== 0) {
-    document.getElementById("pairing").replaceChildren(el("div", { className: "err" }, "The daemon isn't running."));
+    if (shown !== "") document.getElementById("pairing").replaceChildren(el("div", { className: "err" }, "The daemon isn't running."));
+    shown = "";
     return;
   }
-  try { render(JSON.parse(r.out)); } catch (e) { /* half-written: next tick */ }
+  if (r.out !== shown) {
+    try {
+      const s = JSON.parse(r.out);
+      render(s);
+      shown = r.out;
+      until = (s.pairing || {}).until || 0;
+    } catch (e) { /* half-written: next tick */ }
+  }
+  tick();
 }
 
 refresh();
