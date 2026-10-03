@@ -254,6 +254,16 @@ public final class LinkTest {
         check(s.pc.ready && s.phone.ready, "frames split anywhere");
     }
 
+    static void media() {
+        // Golden; atrium pins the same bytes.
+        eq(hex(Link.packMedia(Link.MEDIA_PAUSED, Link.CAN_PLAY, 1, 2, "t", "", "al", "x", ascii("ART"))),
+                "0201000000010000000200017400000002616c000178415254", "golden media");
+        long[] cmd = Link.unpackMediaCommand(Crypto.unhex("0700011170"));
+        check(cmd != null && cmd[0] == Link.CMD_SEEK && cmd[1] == 70000, "golden media command");
+        check(Link.unpackMediaCommand(Crypto.unhex("0800000000")) == null, "unknown command");
+        check(Link.unpackMediaCommand(Crypto.unhex("01")) == null, "short command");
+    }
+
     static void datagrams() {
         Cipher c = Crypto.cipher();
         byte[] key = ascii(K.replace('k', 'a'));
@@ -282,6 +292,7 @@ public final class LinkTest {
         known();
         failures();
         datagrams();
+        media();
         if (failures > 0) {
             System.out.println(failures + " failed");
             System.exit(1);

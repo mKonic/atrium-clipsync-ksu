@@ -42,6 +42,7 @@ final class LanLink {
     private final byte[] id;
     private final Map<String, String[]> paired = new LinkedHashMap<>();  // hex id -> {hex key, name}
     private final List<Conn> conns = new ArrayList<>();
+    private final MediaBridge media;
     private int port;
     private long pairUntil;
     private Conn confirming;  // the connection showing a pairing code
@@ -58,6 +59,11 @@ final class LanLink {
         this.statusFile = new File(dir, "status.json");
         this.commandFile = new File(dir, "command");
         this.id = loadId(new File(dir, "id"));
+        this.media = new MediaBridge(ctx, main, body -> {
+            for (Conn k : new ArrayList<>(conns))
+                if (k.link.ready())
+                    k.apply(k.link.message(Link.MEDIA, body));
+        });
         loadPaired();
     }
 
@@ -116,6 +122,7 @@ final class LanLink {
             }
         };
         observer.startWatching();
+        media.start();
         Thread t = new Thread(this::serve, "lan");
         t.setDaemon(true);
         t.start();
@@ -348,6 +355,7 @@ final class LanLink {
                             p[1] = link.peerName();
                             savePaired();
                         }
+                        apply(link.message(Link.MEDIA, media.current()));
                         writeStatus();
                         break;
                     case Link.Event.MESSAGE:
@@ -370,6 +378,10 @@ final class LanLink {
             } else if (type == Link.AUDIO_STOP) {
                 stopAudio();
                 state(Link.AUDIO_STOPPED, "");
+            } else if (type == Link.MEDIA_COMMAND) {
+                long[] c = Link.unpackMediaCommand(body);
+                if (c != null)
+                    media.command((int) c[0], c[1]);
             }
         }
 
@@ -425,8 +437,12 @@ final class LanLink {
             stopAudio();
             conns.remove(this);
             if (confirming == this) {
+                // A code that was shown and didn't pair (rejected on either
+                // end, cancelled, cut off) ends the pairing: the user starts
+                // a new one, not the PC retrying.
                 confirming = null;
                 code = null;
+                pairUntil = 0;
             }
             out.add(new byte[0]);
             try {

@@ -24,9 +24,14 @@ public final class Link {
 
     public static final int HELLO = 1, PAIR_COMMIT = 2, PAIR_KEY = 3, PAIR_REVEAL = 4, PAIR_ACCEPT = 5,
             PAIR_REJECT = 6, AUTH = 7, PROOF = 8, UNKNOWN = 9, REFUSED = 10,
-            AUDIO_START = 16, AUDIO_STOP = 17, AUDIO_STATE = 18;
+            AUDIO_START = 16, AUDIO_STOP = 17, AUDIO_STATE = 18, MEDIA = 19, MEDIA_COMMAND = 20;
 
     public static final int AUDIO_STOPPED = 0, AUDIO_STREAMING = 1, AUDIO_FAILED = 2;
+
+    public static final int MEDIA_NONE = 0, MEDIA_PLAYING = 1, MEDIA_PAUSED = 2, MEDIA_STOPPED = 3;
+    public static final int CAN_PLAY = 1, CAN_PAUSE = 2, CAN_NEXT = 4, CAN_PREVIOUS = 8, CAN_SEEK = 16;
+    public static final int CMD_PLAY = 1, CMD_PAUSE = 2, CMD_PLAY_PAUSE = 3, CMD_NEXT = 4, CMD_PREVIOUS = 5,
+            CMD_STOP = 6, CMD_SEEK = 7;
 
     private static final byte[] PAIR_LABEL = "atrium-link pair v1".getBytes(StandardCharsets.UTF_8);
     private static final byte[] PROOF_LABEL = "atrium-link proof v1".getBytes(StandardCharsets.UTF_8);
@@ -416,6 +421,35 @@ public final class Link {
     }
 
     // --- datagrams -------------------------------------------------------------
+
+    // MEDIA's body (see atrium's link_core.hpp).
+    public static byte[] packMedia(int status, int actions, long duration, long position, String title, String artist,
+            String album, String app, byte[] art) {
+        java.io.ByteArrayOutputStream o = new java.io.ByteArrayOutputStream();
+        byte[] head = new byte[10];
+        head[0] = (byte) status;
+        head[1] = (byte) actions;
+        put32(head, 2, duration);
+        put32(head, 6, position);
+        o.write(head, 0, head.length);
+        for (String s : new String[] {title, artist, album, app}) {
+            byte[] b = (s == null ? "" : s).getBytes(StandardCharsets.UTF_8);
+            int n = Math.min(b.length, 0xffff);
+            o.write(n >>> 8);
+            o.write(n);
+            o.write(b, 0, n);
+        }
+        if (art != null)
+            o.write(art, 0, art.length);
+        return o.toByteArray();
+    }
+
+    // MEDIA_COMMAND's body: {command, position ms}, or null.
+    public static long[] unpackMediaCommand(byte[] b) {
+        if (b.length != 5 || b[0] < CMD_PLAY || b[0] > CMD_SEEK)
+            return null;
+        return new long[] {b[0], get(b, 1, 4)};
+    }
 
     public static final int AUDIO_MAGIC = 0xA7, NACK_MAGIC = 0xA8;
     static final int AUDIO_LABEL = 3, NACK_LABEL = 4;
